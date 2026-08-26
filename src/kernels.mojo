@@ -4,7 +4,6 @@ All memory is owned by NumPy. Buffers cross the C ABI as integer addresses so
 the exports remain non-parametric under the Mojo 1.0 nightly compiler.
 """
 
-from std.algorithm import parallelize
 from std.math import isnan, sqrt
 from std.sys import simd_width_of
 
@@ -166,35 +165,15 @@ def bbands_finish(
     spread_epsilon: Float64,
     numerator_epsilon: Float64,
 ):
-    comptime parallel_threshold = 262144
-    comptime num_tasks = 8
-    if n < parallel_threshold:
-        bbands_finish_range(
-            mid,
-            bandwidth,
-            percent,
-            0,
-            n,
-            spread_epsilon,
-            numerator_epsilon,
-        )
-        return
-
-    @parameter
-    def finish_task(task: Int):
-        var start = task * n // num_tasks
-        var end = (task + 1) * n // num_tasks
-        bbands_finish_range(
-            mid,
-            bandwidth,
-            percent,
-            start,
-            end,
-            spread_epsilon,
-            numerator_epsilon,
-        )
-
-    parallelize[finish_task](num_tasks, num_tasks)
+    bbands_finish_range(
+        mid,
+        bandwidth,
+        percent,
+        0,
+        n,
+        spread_epsilon,
+        numerator_epsilon,
+    )
 
 
 def rolling_bbands(
