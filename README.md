@@ -88,15 +88,15 @@ mojo-pandas-ta time; no compilation time is included in either measurement.
 
 | Indicator | Mojo | pandas-ta | Speedup |
 |---|---:|---:|---:|
-| SMA(50) | 47.87 ms | 159.72 ms | 3.34x |
-| EMA(20) | 45.56 ms | 75.09 ms | 1.65x |
-| RSI(14) | 35.27 ms | 253.82 ms | 7.20x |
-| MACD(12,26,9) | 87.59 ms | 369.36 ms | 4.22x |
-| BBANDS(20) | 46.88 ms | 302.39 ms | 6.45x |
-| ATR(14) | 36.94 ms | 536.82 ms | 14.53x |
-| STOCH(14,3,3) | 160.85 ms | 858.88 ms | 5.34x |
-| DONCHIAN(20,20) | 81.94 ms | 185.85 ms | 2.27x |
-| OBV | 17.32 ms | 50.57 ms | 2.92x |
+| SMA(50) | 18.19 ms | 116.24 ms | 6.39x |
+| EMA(20) | 22.77 ms | 47.02 ms | 2.07x |
+| RSI(14) | 24.59 ms | 145.79 ms | 5.93x |
+| MACD(12,26,9) | 46.34 ms | 283.62 ms | 6.12x |
+| BBANDS(20) | 63.32 ms | 256.56 ms | 4.05x |
+| ATR(14) | 34.34 ms | 526.05 ms | 15.32x |
+| STOCH(14,3,3) | 94.59 ms | 504.58 ms | 5.33x |
+| DONCHIAN(20,20) | 55.43 ms | 167.14 ms | 3.02x |
+| OBV | 16.73 ms | 46.50 ms | 2.78x |
 
 These are single-machine measurements, not universal claims. The benchmark
 script prints a fresh Markdown table so results can be reproduced rather than
@@ -120,10 +120,14 @@ original index or column naming convention.
 
 The default SMA Bollinger Bands path fuses the rolling mean, variance, bands,
 and temporary calculations into one pass. Its independent bandwidth and
-percent finalization uses native-width float64 SIMD with a scalar remainder
-and splits sufficiently large inputs across CPU workers.
+percent finalization uses native-width float64 SIMD with a scalar remainder.
+STOCH similarly fuses its extrema, smoothing, and histogram work without
+temporary NumPy columns. STOCH and Donchian run their independent low/high
+extrema concurrently above 262,144 rows, while smaller inputs stay serial.
 
-There is no GPU path; all covered kernels execute on the CPU.
+There is no GPU path. The covered kernels are streaming recurrences, rolling
+updates, and extrema with arithmetic intensity below the roughly two-FLOP-per-
+byte break-even point; host/device transfers would cost more than GPU execution.
 
 ## License
 

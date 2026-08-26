@@ -169,6 +169,16 @@ def test_stoch_parity(market, kwargs):
     )
 
 
+def test_stoch_nan_gap_parity(market):
+    high, low, close, _ = (value.copy() for value in market)
+    for value in (high, low, close):
+        value.iloc[[0, 17, 18, 79, 200]] = np.nan
+    assert_same(
+        ta.stoch(high, low, close),
+        upstream.stoch(high, low, close, talib=False),
+    )
+
+
 def test_obv_parity(market):
     _, _, close, volume = market
     assert_same(
@@ -260,6 +270,22 @@ def test_bbands_parallel_threshold_and_simd_tail(n):
     assert_same(
         ta.bbands(close, length=20),
         upstream.bbands(close, length=20, talib=False),
+    )
+
+
+@pytest.mark.parametrize("n", [262_139, 262_147])
+def test_extrema_parallel_threshold_and_simd_tail(n):
+    rng = np.random.default_rng(n)
+    close = pd.Series(100 + np.cumsum(rng.normal(size=n)))
+    high = close + pd.Series(np.abs(rng.normal(size=n)))
+    low = close - pd.Series(np.abs(rng.normal(size=n)))
+    assert_same(
+        ta.donchian(high, low),
+        upstream.donchian(high, low),
+    )
+    assert_same(
+        ta.stoch(high, low, close),
+        upstream.stoch(high, low, close, talib=False),
     )
 
 

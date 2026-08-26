@@ -24,6 +24,8 @@ _SIGNATURES = {
     "mpta_variance": ([I, I, I, I, I, I], None),
     "mpta_bbands": ([I, I, I, I, I, I, I, I, I, F, F], None),
     "mpta_extreme": ([I, I, I, I, I, I, I], None),
+    "mpta_donchian": ([I, I, I, I, I, I, I, I, I, I, I, I], None),
+    "mpta_stoch_sma": ([I, I, I, I, I, I, I, I, I, I, I, I], None),
     "mpta_mom_roc": ([I, I, I, I, F, I], None),
     "mpta_true_range": ([I, I, I, I, I, I, I], None),
     "mpta_rsi": ([I, I, I, I, I, F], None),

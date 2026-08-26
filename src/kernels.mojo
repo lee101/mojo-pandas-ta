@@ -5,10 +5,12 @@ the exports remain non-parametric under the Mojo 1.0 nightly compiler.
 """
 
 from std.math import isnan, sqrt
+from max.algorithm import parallelize
 from std.sys import simd_width_of
 
 comptime FPtr = UnsafePointer[Float64, AnyOrigin[mut=True]]
 comptime IPtr = UnsafePointer[Int64, AnyOrigin[mut=True]]
+comptime EXTREME_PARALLEL_THRESHOLD = 262_144
 
 
 def fp(addr: Int) -> FPtr:
@@ -22,6 +24,32 @@ def ip(addr: Int) -> IPtr:
 def nan_value() -> Float64:
     var zero = 0.0
     return zero / zero
+
+
+def has_nan(src: FPtr, n: Int) -> Bool:
+    comptime W = simd_width_of[DType.float64]()
+    var i = 0
+    while i + W <= n:
+        if isnan(src.load[width=W](i)).reduce_or():
+            return True
+        i += W
+    while i < n:
+        if isnan(src[i]):
+            return True
+        i += 1
+    return False
+
+
+def fill_nan(dst: FPtr, n: Int):
+    comptime W = simd_width_of[DType.float64]()
+    var nan = nan_value()
+    var i = 0
+    while i + W <= n:
+        dst.store(i, SIMD[DType.float64, W](nan))
+        i += W
+    while i < n:
+        dst[i] = nan
+        i += 1
 
 
 def ewm(
@@ -48,8 +76,24 @@ def ewm(
             average = total / Float64(count)
             dst[start] = average
 
-    var old_weight = 1.0
     var i = start if presma == 0 else start + 1
+    if adjust == 0 and not has_nan(src, n):
+        var complement = 1.0 - alpha
+        while i < n:
+            var value = src[i]
+            if isnan(average):
+                if not isnan(value):
+                    average = value
+                    dst[i] = average
+                i += 1
+                continue
+            if not isnan(value) and average != value:
+                average = complement * average + alpha * value
+            dst[i] = average
+            i += 1
+        return
+
+    var old_weight = 1.0
     while i < n:
         var value = src[i]
         if isnan(average):
@@ -296,6 +340,128 @@ def rolling_extreme(
             dst[i] = src[Int(queue[head])]
 
 
+def rolling_extreme_pair(
+    first_src: FPtr,
+    first_dst: FPtr,
+    first_queue: IPtr,
+    first_length: Int,
+    first_periods: Int,
+    first_max: Int,
+    second_src: FPtr,
+    second_dst: FPtr,
+    second_queue: IPtr,
+    second_length: Int,
+    second_periods: Int,
+    second_max: Int,
+    n: Int,
+):
+    if n < EXTREME_PARALLEL_THRESHOLD:
+        rolling_extreme(
+            first_src,
+            first_dst,
+            first_queue,
+            n,
+            first_length,
+            first_periods,
+            first_max,
+        )
+        rolling_extreme(
+            second_src,
+            second_dst,
+            second_queue,
+            n,
+            second_length,
+            second_periods,
+            second_max,
+        )
+        return
+
+    def work(task: Int) {var}:
+        if task == 0:
+            rolling_extreme(
+                first_src,
+                first_dst,
+                first_queue,
+                n,
+                first_length,
+                first_periods,
+                first_max,
+            )
+        else:
+            rolling_extreme(
+                second_src,
+                second_dst,
+                second_queue,
+                n,
+                second_length,
+                second_periods,
+                second_max,
+            )
+
+    parallelize(work, 2, 2)
+
+
+def midpoint(lower: FPtr, upper: FPtr, mid: FPtr, n: Int):
+    comptime W = simd_width_of[DType.float64]()
+    var i = 0
+    while i + W <= n:
+        mid.store(
+            i,
+            0.5
+            * (
+                lower.load[width=W](i)
+                + upper.load[width=W](i)
+            ),
+        )
+        i += W
+    while i < n:
+        mid[i] = 0.5 * (lower[i] + upper[i])
+        i += 1
+
+
+def stoch_raw(
+    close: FPtr, lowest: FPtr, highest: FPtr, raw: FPtr, n: Int
+):
+    var add_epsilon = False
+    for i in range(n):
+        if highest[i] - lowest[i] == 0.0:
+            add_epsilon = True
+            break
+    var epsilon = 2.220446049250313e-16 if add_epsilon else 0.0
+    comptime W = simd_width_of[DType.float64]()
+    var i = 0
+    while i + W <= n:
+        var low_values = lowest.load[width=W](i)
+        raw.store(
+            i,
+            100.0
+            * (close.load[width=W](i) - low_values)
+            / (highest.load[width=W](i) - low_values + epsilon),
+        )
+        i += W
+    while i < n:
+        raw[i] = (
+            100.0
+            * (close[i] - lowest[i])
+            / (highest[i] - lowest[i] + epsilon)
+        )
+        i += 1
+
+
+def subtract(first: FPtr, second: FPtr, dst: FPtr, n: Int):
+    comptime W = simd_width_of[DType.float64]()
+    var i = 0
+    while i + W <= n:
+        dst.store(
+            i,
+            first.load[width=W](i) - second.load[width=W](i),
+        )
+        i += W
+    while i < n:
+        dst[i] = first[i] - second[i]
+        i += 1
+
+
 @export("mpta_sma")
 def mpta_sma(
     src_addr: Int, dst_addr: Int, n: Int, length: Int, min_periods: Int
@@ -457,6 +623,104 @@ def mpta_extreme(
         min_periods,
         find_max,
     )
+
+
+@export("mpta_donchian")
+def mpta_donchian(
+    high_addr: Int,
+    low_addr: Int,
+    lower_addr: Int,
+    mid_addr: Int,
+    upper_addr: Int,
+    lower_queue_addr: Int,
+    upper_queue_addr: Int,
+    n: Int,
+    lower_length: Int,
+    upper_length: Int,
+    lower_periods: Int,
+    upper_periods: Int,
+) abi("C"):
+    if high_addr == 0 or low_addr == 0 or lower_addr == 0:
+        return
+    if mid_addr == 0 or upper_addr == 0 or lower_queue_addr == 0:
+        return
+    if upper_queue_addr == 0 or n <= 0:
+        return
+    if lower_length <= 0 or upper_length <= 0:
+        return
+    if lower_length > n or upper_length > n:
+        return
+    if lower_periods <= 0 or lower_periods > lower_length:
+        return
+    if upper_periods <= 0 or upper_periods > upper_length:
+        return
+    var lower = fp(lower_addr)
+    var upper = fp(upper_addr)
+    rolling_extreme_pair(
+        fp(low_addr),
+        lower,
+        ip(lower_queue_addr),
+        lower_length,
+        lower_periods,
+        0,
+        fp(high_addr),
+        upper,
+        ip(upper_queue_addr),
+        upper_length,
+        upper_periods,
+        1,
+        n,
+    )
+    midpoint(lower, upper, fp(mid_addr), n)
+
+
+@export("mpta_stoch_sma")
+def mpta_stoch_sma(
+    high_addr: Int,
+    low_addr: Int,
+    close_addr: Int,
+    k_addr: Int,
+    d_addr: Int,
+    histogram_addr: Int,
+    low_queue_addr: Int,
+    high_queue_addr: Int,
+    n: Int,
+    length: Int,
+    smooth_k: Int,
+    smooth_d: Int,
+) abi("C"):
+    if high_addr == 0 or low_addr == 0 or close_addr == 0:
+        return
+    if k_addr == 0 or d_addr == 0 or histogram_addr == 0:
+        return
+    if low_queue_addr == 0 or high_queue_addr == 0 or n <= 0:
+        return
+    if length <= 0 or smooth_k <= 0 or smooth_d <= 0 or length > n:
+        return
+    var stoch_k = fp(k_addr)
+    var stoch_d = fp(d_addr)
+    var histogram = fp(histogram_addr)
+    rolling_extreme_pair(
+        fp(low_addr),
+        stoch_k,
+        ip(low_queue_addr),
+        length,
+        length,
+        0,
+        fp(high_addr),
+        stoch_d,
+        ip(high_queue_addr),
+        length,
+        length,
+        1,
+        n,
+    )
+    stoch_raw(fp(close_addr), stoch_k, stoch_d, histogram, n)
+    fill_nan(stoch_k, n)
+    fill_nan(stoch_d, n)
+    rolling_mean(histogram, stoch_k, n, smooth_k, smooth_k)
+    rolling_mean(stoch_k, stoch_d, n, smooth_d, smooth_d)
+    subtract(stoch_k, stoch_d, histogram, n)
 
 
 @export("mpta_mom_roc")

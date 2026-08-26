@@ -588,31 +588,54 @@ def stoch(
     high, low, close = series
     mode = _mode(mamode, "sma")
     h, lo, c = (f64(value.to_numpy()) for value in series)
-    lowest = _extreme_values(lo, k, k, False)
-    highest = _extreme_values(h, k, k, True)
-    spread = highest - lowest
-    if np.equal(spread, 0).any():
-        spread += sys.float_info.epsilon
-    raw = 100.0 * (c - lowest) / spread
-    first = int(np.flatnonzero(~np.isnan(raw))[0])
-    if smooth_k == 1:
-        stoch_k = raw
+    if mode == "sma":
+        stoch_k, stoch_d, stoch_h = (empty(c.size) for _ in range(3))
+        queues = np.empty(2 * c.size, dtype=np.int64)
+        lib().mpta_stoch_sma(
+            addr(h),
+            addr(lo),
+            addr(c),
+            addr(stoch_k),
+            addr(stoch_d),
+            addr(stoch_h),
+            addr(queues[: c.size]),
+            addr(queues[c.size :]),
+            c.size,
+            k,
+            smooth_k,
+            d,
+        )
+        valid_raw = np.flatnonzero(~np.isnan(stoch_k))
+        if not valid_raw.size:
+            return None
+        first = max(0, int(valid_raw[0]) - smooth_k + 1)
+        first_k = int(valid_raw[0])
     else:
-        tail = _ma_values(mode, raw[first:], smooth_k, **kwargs)
+        lowest = _extreme_values(lo, k, k, False)
+        highest = _extreme_values(h, k, k, True)
+        spread = highest - lowest
+        if np.equal(spread, 0).any():
+            spread += sys.float_info.epsilon
+        raw = 100.0 * (c - lowest) / spread
+        first = int(np.flatnonzero(~np.isnan(raw))[0])
+        if smooth_k == 1:
+            stoch_k = raw
+        else:
+            tail = _ma_values(mode, raw[first:], smooth_k, **kwargs)
+            if tail is None:
+                return None
+            stoch_k = empty(c.size)
+            stoch_k[first:] = tail
+        valid = np.flatnonzero(~np.isnan(stoch_k))
+        if not valid.size:
+            return None
+        first_k = int(valid[0])
+        tail = _ma_values(mode, stoch_k[first_k:], d, **kwargs)
         if tail is None:
             return None
-        stoch_k = empty(c.size)
-        stoch_k[first:] = tail
-    valid = np.flatnonzero(~np.isnan(stoch_k))
-    if not valid.size:
-        return None
-    first_k = int(valid[0])
-    tail = _ma_values(mode, stoch_k[first_k:], d, **kwargs)
-    if tail is None:
-        return None
-    stoch_d = empty(c.size)
-    stoch_d[first_k:] = tail
-    stoch_h = stoch_k - stoch_d
+        stoch_d = empty(c.size)
+        stoch_d[first_k:] = tail
+        stoch_h = stoch_k - stoch_d
     props = f"_{k}_{d}_{smooth_k}"
     columns = [f"STOCH{part}{props}" for part in ("k", "d", "h")]
     frame = pd.DataFrame(
@@ -657,9 +680,22 @@ def donchian(
         return None
     high, low = series
     h, lo = (f64(value.to_numpy()) for value in series)
-    lower = _extreme_values(lo, lower_length, lower_periods, False)
-    upper = _extreme_values(h, upper_length, upper_periods, True)
-    mid = 0.5 * (lower + upper)
+    lower, mid, upper = (empty(h.size) for _ in range(3))
+    queues = np.empty(2 * h.size, dtype=np.int64)
+    lib().mpta_donchian(
+        addr(h),
+        addr(lo),
+        addr(lower),
+        addr(mid),
+        addr(upper),
+        addr(queues[: h.size]),
+        addr(queues[h.size :]),
+        h.size,
+        lower_length,
+        upper_length,
+        lower_periods,
+        upper_periods,
+    )
     columns = [
         f"DCL_{lower_length}_{upper_length}",
         f"DCM_{lower_length}_{upper_length}",
