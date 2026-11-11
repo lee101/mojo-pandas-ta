@@ -30,7 +30,7 @@ def has_nan(src: FPtr, n: Int) -> Bool:
     comptime W = simd_width_of[DType.float64]()
     var i = 0
     while i + W <= n:
-        if isnan(src.load[width=W](i)).reduce_or():
+        if isnan(src.unsafe_load[width=W](i)).reduce_or():
             return True
         i += W
     while i < n:
@@ -189,9 +189,9 @@ def bbands_finish_range(
     var i = start
     var vector_end = start + ((end - start) // W) * W
     while i < vector_end:
-        var spread = bandwidth.load[width=W](i) + spread_epsilon
-        var numerator = percent.load[width=W](i) + numerator_epsilon
-        bandwidth.store(i, 100.0 * spread / mid.load[width=W](i))
+        var spread = bandwidth.unsafe_load[width=W](i) + spread_epsilon
+        var numerator = percent.unsafe_load[width=W](i) + numerator_epsilon
+        bandwidth.store(i, 100.0 * spread / mid.unsafe_load[width=W](i))
         percent.store(i, numerator / spread)
         i += W
     while i < end:
@@ -409,8 +409,8 @@ def midpoint(lower: FPtr, upper: FPtr, mid: FPtr, n: Int):
             i,
             0.5
             * (
-                lower.load[width=W](i)
-                + upper.load[width=W](i)
+                lower.unsafe_load[width=W](i)
+                + upper.unsafe_load[width=W](i)
             ),
         )
         i += W
@@ -431,12 +431,12 @@ def stoch_raw(
     comptime W = simd_width_of[DType.float64]()
     var i = 0
     while i + W <= n:
-        var low_values = lowest.load[width=W](i)
+        var low_values = lowest.unsafe_load[width=W](i)
         raw.store(
             i,
             100.0
-            * (close.load[width=W](i) - low_values)
-            / (highest.load[width=W](i) - low_values + epsilon),
+            * (close.unsafe_load[width=W](i) - low_values)
+            / (highest.unsafe_load[width=W](i) - low_values + epsilon),
         )
         i += W
     while i < n:
@@ -454,7 +454,7 @@ def subtract(first: FPtr, second: FPtr, dst: FPtr, n: Int):
     while i + W <= n:
         dst.store(
             i,
-            first.load[width=W](i) - second.load[width=W](i),
+            first.unsafe_load[width=W](i) - second.unsafe_load[width=W](i),
         )
         i += W
     while i < n:
